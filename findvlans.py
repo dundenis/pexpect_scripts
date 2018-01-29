@@ -11,11 +11,20 @@ import getpass
 from itertools import groupby 
 
 PROMPT = '\<([\w\-]*)\>'
+
 VLAN_RANGE = [vlan for vlan in range(2, 4095)]
+
 PRINT_MSG = ''
+
 username = ''
 password = ''
 host = ''
+
+help_msg = '''Help:
+-h  hostname or host's ip address
+-u  username for authentication on the host
+-p  user's password
+-?  help '''
 
 def exit_with_error(error):
     print(error)
@@ -80,24 +89,69 @@ def print_ranges(inner_list):
 def calc_free(vlist):
     return list(set(VLAN_RANGE)-set(vlist))
 
+def auth(pexpect_obj, options):
+    try:
+        pexpect_obj.expect('Username:', timeout = 2)
+        if '-u' in options:
+            username = options['-u']
+        else:
+            username = input('username: ')
+        pexpect_obj.send(username+'\n')
+    except pexpect.TIMEOUT:
+        pass
+    
+    try:
+        pexpect_obj.expect('Password:\s?', timeout = 2)
+    except pexpect.TIMEOUT as error:
+        pexpect_obj.close()
+        print("Connection error. Exceed timeout")
+        os._exit(1)
+
+    if '-p' in options:
+        password = options['-p']
+    else:
+        password = getpass.getpass('password: ')
+
+    pexpect_obj.send(password + '\n')
+    try:
+        pexpect_obj.expect(PROMPT, timeout = 2)
+    except pexpect.TIMEOUT:
+        pexpect_obj.close()
+        print('Authentication failed!')
+        os._exit(1)
+    pexpect_obj.send('screen-length 0 temporary\n')
+    
+
 def main():
     global PROMPT
+    try:
+        optlist, args = getopt.getopt(sys.argv[1:],'?h:up')
+    except Exception as error:
+        print(str(error))
+        os._exit(1)
+
+    options = dict(optlist)
+
+    if '-?' in options:
+        exit_with_error(help_msg)
+
+    if '-h' in options:
+        host = options['-h']
+    else:
+        exit_with_error(help_msg)
+
     telnet = pexpect.spawn(
         'telnet ' + host, 
         timeout = 90, 
         maxread = 7000, 
         encoding = 'utf-8' 
         )
-    telnet.expect('Username:')
-    telnet.send(username+'\n')
-    telnet.expect('Password:\s?')
-    telnet.send(password + '\n')
-    telnet.expect(PROMPT)
-    telnet.send('screen-length 0 temporary\n')
+
+    auth(telnet, options)
     telnet.expect(PROMPT)
     hostname = telnet.match.groups()[0]
     PROMPT = r'\<' + hostname + '\>'
-    
+
     intf_conf = request_conf(
         telnet, 
         cmd = 'disp cur int\n',
@@ -132,12 +186,11 @@ def main():
                 text = intf,
                 regex = r'vlan-mapping vlan\s+(\d*)'
                 )
-
             for tup in vl_stack_list:
                 global PRINT_MSG
                 if tup[0] == '2' and tup[1] == '4094':
                     int_reg = re.search(r'X?GigabitEthernet\d+/+\d+/+\d*', intf)
-                    PRINT_MSG += "WARNING! Excepted interface " + int_reg[0]
+                    PRINT_MSG += "\n  WARNING! Excepted interface " + int_reg[0]
                     continue
                 if not tup[2] in vl_outers_d.keys():
                     vl_outers_d.update({tup[2]:[]}) 
