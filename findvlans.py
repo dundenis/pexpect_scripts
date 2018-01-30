@@ -1,7 +1,5 @@
 #!/usr/bin/python3
 
-#release candidate file
-
 import sys
 import re
 import pexpect
@@ -27,7 +25,7 @@ help_msg = '''Help:
 -?  help '''
 
 def exit_with_error(error):
-    print(error)
+    print('ERROR!\n'+ error)
     os._exit(1)
 
 def request_conf(pexpect_obj, cmd, error_msg = ''):
@@ -99,13 +97,15 @@ def auth(pexpect_obj, options):
         pexpect_obj.send(username+'\n')
     except pexpect.TIMEOUT:
         pass
+    except pexpect.EOF:
+        pexpect_obj.close()
+        exit_with_error(pexpect_obj.before)
     
     try:
         pexpect_obj.expect('Password:\s?', timeout = 2)
     except pexpect.TIMEOUT as error:
         pexpect_obj.close()
-        print("Connection error. Exceed timeout")
-        os._exit(1)
+        exit_with_error('Connection error. Exceed timeout')
 
     if '-p' in options:
         password = options['-p']
@@ -117,13 +117,14 @@ def auth(pexpect_obj, options):
         pexpect_obj.expect(PROMPT, timeout = 2)
     except pexpect.TIMEOUT:
         pexpect_obj.close()
-        print('Authentication failed!')
-        os._exit(1)
+        exit_with_error(pexpect_obj.before)
+
     pexpect_obj.send('screen-length 0 temporary\n')
     
 
 def main():
     global PROMPT
+
     try:
         optlist, args = getopt.getopt(sys.argv[1:],'?h:up')
     except Exception as error:
@@ -144,8 +145,9 @@ def main():
         'telnet ' + host, 
         timeout = 90, 
         maxread = 7000, 
-        encoding = 'utf-8' 
+        encoding = 'utf-8'
         )
+
 
     auth(telnet, options)
     telnet.expect(PROMPT)
@@ -190,7 +192,7 @@ def main():
                 global PRINT_MSG
                 if tup[0] == '2' and tup[1] == '4094':
                     int_reg = re.search(r'X?GigabitEthernet\d+/+\d+/+\d*', intf)
-                    PRINT_MSG += "\n  WARNING! Excepted interface " + int_reg[0]
+                    print("\n  WARNING! Excepted interface " + int_reg[0])
                     continue
                 if not tup[2] in vl_outers_d.keys():
                     vl_outers_d.update({tup[2]:[]}) 
@@ -211,6 +213,7 @@ def main():
     # -- used inner-vlans per group (key: 'used')
 
     vl_groups = list(set([item[2] for item in vl_outers_list if item[0] in vl_outers_d.keys()]))
+    vl_groups.sort()
 
     vl_groups_d = { key: {
     'outers':[{tup[0]:{'desc': tup[1],
@@ -232,11 +235,17 @@ def main():
     PRINT_MSG += '\n' + ' '*4 + 'HOST: ' + hostname
     PRINT_MSG += '\n' + ' '*4 + 'OUTER-VLAN groups:\n'
 
-    for gr in vl_groups_d.keys():
+    for gr in vl_groups:
         PRINT_MSG += '\n' + ' '*6 + ('%s:\n' % gr)
-        PRINT_MSG += ' '*8 + 'used:\n%s\n' % vl_groups_d[gr]['used'] 
-        PRINT_MSG += ' '*8 + 'free:\n%s\n' % vl_groups_d[gr]['free']
+        for item in vl_outers_list:
+            if gr in item[2]:
+                PRINT_MSG += ' '*8 + 'vlan id: ' + item[0] + ', description: ' + item[1] + '\n' 
+        PRINT_MSG += '\n' 
+        PRINT_MSG += ' '*8 + 'used:\n' + ' '*8 + '%s\n' % vl_groups_d[gr]['used'] + '\n' 
+        PRINT_MSG += ' '*8 + 'free:\n' + ' '*8 + '%s\n' % vl_groups_d[gr]['free'] + '\n'
+
     print(PRINT_MSG)
+
 
 
 if __name__ == '__main__':
